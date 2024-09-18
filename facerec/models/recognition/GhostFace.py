@@ -48,7 +48,7 @@ def load_model():
     embedding = keras.layers.BatchNormalization(momentum=0.99, epsilon=0.001, scale=True, name="pre_embedding")(nn)
     embedding_fp32 = keras.layers.Activation("linear", dtype="float32", name="embedding")(embedding)
     obrez = keras.models.Model(inputs, embedding_fp32, name="OBREZ")
-    obrez = obrez.load_weights("GhostFaceNet_o2.h5")
+    obrez = obrez.load_weights("./facerec/weights/GhostFaceNet_o2.h5")
     return obrez
 
 def replace_ReLU_with_PReLU(model, target_activation="PReLU", **kwargs):
