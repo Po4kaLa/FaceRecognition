@@ -1,12 +1,11 @@
-from models import Recognitor
-
-import keras
-
 """
 The main GhostNet architecture as specified in "GhostNet: More Features from Cheap Operations"
 Paper:
 https://arxiv.org/pdf/1911.11907.pdf
 """
+
+from facerec.models import Recognitor
+
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import backend as K
@@ -29,19 +28,70 @@ import math
 CONV_KERNEL_INITIALIZER = keras.initializers.VarianceScaling(scale=2.0, mode="fan_out", distribution="truncated_normal")
 # CONV_KERNEL_INITIALIZER = 'glorot_uniform'
 
-class GhostFaceNetClient(FacialRecognition):
-
+class GhostFaceNetClient(Recognitor):
     def __init__(self):
         self.model_name = "GhostFaceNet"
         self.input_shape = (112, 112, 3)
         self.output_shape = 512
         self.model = load_model()
 
-
 def load_model():
     model = GhostNet(input_shape=(112, 112, 3), include_top=False, width=1.3)
+    model_prelu = replace_ReLU_with_PReLU(model)
+    model_preli_fp32 = convert_mixed_float16_to_float32(model_prelu)
+    inputs = model_preli_fp32.inputs[0]
+    nn = model_preli_fp32.layers[229].output
+    nn = keras.layers.DepthwiseConv2D(nn.shape[1], use_bias=False, name="GDC_dw")(nn)
+    nn = keras.layers.BatchNormalization(momentum=0.99, epsilon=0.001, name="GDC_batchnorm")(nn)
+    nn = keras.layers.Conv2D(512, 1, use_bias=False, kernel_initializer="glorot_normal", name="GDC_conv")(nn)
+    nn = keras.layers.Flatten(name="GDC_flatten")(nn)
+    embedding = keras.layers.BatchNormalization(momentum=0.99, epsilon=0.001, scale=True, name="pre_embedding")(nn)
+    embedding_fp32 = keras.layers.Activation("linear", dtype="float32", name="embedding")(embedding)
+    obrez = keras.models.Model(inputs, embedding_fp32, name="OBREZ")
+    obrez = obrez.load_weights("GhostFaceNet_o2.h5")
+    return obrez
 
-    return model
+def replace_ReLU_with_PReLU(model, target_activation="PReLU", **kwargs):
+    from tensorflow.keras.layers import ReLU, PReLU, Activation
+
+    def convert_ReLU(layer):
+        # print(layer.name)
+        if isinstance(layer, ReLU) or (isinstance(layer, Activation) and layer.activation == keras.activations.relu):
+            if target_activation == "PReLU":
+                layer_name = layer.name.replace("_relu", "_prelu")
+                print(">>>> Convert ReLU:", layer.name, "-->", layer_name)
+                # Default initial value in mxnet and pytorch is 0.25
+                return PReLU(shared_axes=[1, 2], alpha_initializer=tf.initializers.Constant(0.25), name=layer_name, **kwargs)
+            elif isinstance(target_activation, str):
+                layer_name = layer.name.replace("_relu", "_" + target_activation)
+                print(">>>> Convert ReLU:", layer.name, "-->", layer_name)
+                return Activation(activation=target_activation, name=layer_name, **kwargs)
+            else:
+                act_class_name = target_activation.__name__
+                layer_name = layer.name.replace("_relu", "_" + act_class_name)
+                print(">>>> Convert ReLU:", layer.name, "-->", layer_name)
+                return target_activation(**kwargs)
+        return layer
+
+    input_tensors = keras.layers.Input(model.input_shape[1:])
+    return keras.models.clone_model(model, input_tensors=input_tensors, clone_function=convert_ReLU)
+
+def convert_mixed_float16_to_float32(model):
+    from tensorflow.keras.layers import InputLayer, Activation
+    from tensorflow.keras.activations import linear
+
+    def do_convert_to_mixed_float16(layer):
+        if not isinstance(layer, InputLayer) and not (isinstance(layer, Activation) and layer.activation == linear):
+            aa = layer.get_config()
+            aa.update({"dtype": "float32"})
+            bb = layer.__class__.from_config(aa)
+            bb.build(layer.input_shape)
+            bb.set_weights(layer.get_weights())
+            return bb
+        return layer
+
+    input_tensors = keras.layers.Input(model.input_shape[1:])
+    return keras.models.clone_model(model, input_tensors=input_tensors, clone_function=do_convert_to_mixed_float16)
 
 def _make_divisible(v, divisor=4, min_value=None):
     """
@@ -225,5 +275,3 @@ def GhostNet(input_shape=(224, 224, 3), include_top=True, classes=0, width=1.3, 
         nn = Activation("softmax")(nn)
 
     return Model(inputs=inputs, outputs=nn, name=name)
-
-

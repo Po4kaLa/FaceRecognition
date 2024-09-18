@@ -27,7 +27,7 @@ class FaceRecognitionApp(QMainWindow):
         self.camera =  Camera()
 
         self.face_detector = Yolov8.YoloDetector()
-        self.model = GhostFace.GhostFaceNetModel()
+        self.model = GhostFace.GhostFaceNetClient()
 
         self.database = FaceDatabase()
 
