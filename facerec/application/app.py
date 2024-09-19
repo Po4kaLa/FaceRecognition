@@ -6,8 +6,7 @@ import io
 sys.path.append("C:/Users/Po4ka/UPPRPO/FaceRecognition/FaceRecognition/facerec/")
 import cv2
 import sqlite3
-import threading
-import queue
+import numpy as np
 
 from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QLineEdit, QMessageBox, QInputDialog
 from PyQt5.QtGui import QImage, QPixmap
@@ -16,6 +15,8 @@ from PyQt5.QtCore import QTimer, QThread, pyqtSignal
 import keras
 import tensorflow as tf
 
+from sklearn.preprocessing import normalize
+
 from application.camera import Camera
 from db.database import FaceDatabase
 from models.recognition import GhostFace
@@ -23,38 +24,25 @@ from models.detection import Yolov8
 from commons import image_utils 
 from commons.logger import Logger
 
-import sqlalchemy as sa
 
 logger = Logger()
-
 class FaceRecognitionApp(QMainWindow):
-    def __init__(self): 
-        super().__init__() 
+    def __init__(self):
+        super().__init__()
 
-        self.name_dist = "Unknown"
+        self.name_dist = "Who"
+
         self.current_frame = None
 
-        # self.frame_queue = queue.Queue()  
-        # self.process_thread = threading.Thread(target=self.process_frames)
-        # self.running = True
-        # self.process_thread.start() 
-        #  self.frame_queue = queue.Queue()   
-        self.db_queue = queue.Queue()  # Очередь для операций с базой данных
-        self.process_thread = threading.Thread(target=self.process_frames) 
-        self.db_thread = threading.Thread(target=self.process_database)  # Поток для работы с БД
-        self.running = True 
-        self.process_thread.start()   
-        self.db_thread.start()  # Запуск потока для работы с БД 
+        self.conn = sqlite3.connect('facialdb.db')
+        self.cursor = self.conn.cursor()
 
-        self.camera = Camera()
-        # self.camera = cv2.VideoCapture(0)
-
+        self.camera = cv2.VideoCapture(0)
         self.face_detector = Yolov8.YoloDetector()
-        self.model = GhostFace.GhostFaceNetClient()
+        self.model = keras.models.load_model('../weights/GhostFaceNet_o2.h5', compile=False)
+        self.database = FaceDatabase() 
 
-        self.database = FaceDatabase()
-
-        #GUI
+        # GUI
         self.setWindowTitle("Face Recognition App")
         self.setGeometry(100, 100, 800, 600)
 
@@ -76,72 +64,25 @@ class FaceRecognitionApp(QMainWindow):
         self.timer.timeout.connect(self.update_frame)
         self.timer.start(50)
 
+    def get_embedding(self, frame):
+
+        frame = tf.convert_to_tensor(frame, dtype=tf.float32)
+        frame = tf.expand_dims(tf.image.resize(frame, (112, 112)), 0)
+        frame = (tf.cast(frame, "float32") - 127.5) * 0.0078125
+        embedding = np.float32(normalize([self.model(frame).numpy()[0]])[0])
+        return embedding
+
     def show_input_dialog(self): 
         self.img_name_input, okPressed = QInputDialog.getText(self, "Введите имя", "Имя изображения:") 
         if self.current_frame is not None: 
             if okPressed and self.img_name_input != '': 
-                self.append_database()
+                self.add_to_database()
         else: 
             print("Нет доступного кадра для добавления в базу.") 
-             
-    def append_database(self): 
-        try: 
-            bbox = self.face_detector.detect_face(self.current_frame)[0] 
-            if len(bbox) > 0: 
-                face_frame = image_utils.crop_face(self.current_frame, bbox) 
-                embedding = self.model.forward(image_utils.normalization_frame_tensor(face_frame)) 
-                if embedding is not None:
-                    self.db_queue.put((embedding, face_frame, self.img_name_input))
-        
-        except Exception as e:
-            print(f"Ошибка при добавлении в базу: {e}")
-
-    def process_database(self): 
-        while self.running: 
-            try: 
-                embedding, face_frame, name = self.db_queue.get(timeout=1)
-                with sqlite3.connect('your_database.db') as conn: 
-                    cursor = conn.cursor()
-                    cursor.execute("INSERT INTO your_table (embedding, name) VALUES (?, ?)", (embedding, name))
-                    conn.commit()
-            except queue.Empty: 
-                continue 
-
-    # def show_input_dialog(self):
-    #     self.img_name_input, okPressed = QInputDialog.getText(self, "Введите имя", "Имя изображения:")
-    #     if self.current_frame is not None:
-    #         if okPressed and self.img_name_input != '':
-    #             self.append_database()
-    #     else:
-    #         print("There is no frame available to add to the database.")
-            
-    # def append_database(self):
-    #     try:
-    #         bbox = self.face_detector.detect_face(self.current_frame)[0]
-    #         if (len(bbox) > 0):
-    #             face_frame = image_utils.crop_face(self.current_frame, bbox)
-    #             embedding = self.model.forward(image_utils.normalization_frame_tensor(face_frame))
-    #             self.database.save_embedding_to_database(embedding, self.img_name_input)
-    #             self.database.save_face_image(face_frame, self.img_name_input)
-    #     finally:
-    #         self.append_thread_running = False
-
-    def process_frames(self):
-        while self.running:
-            try:
-                current_frame, bbox = self.frame_queue.get(timeout=1)  
-                if bbox is not None:
-                    face_frame = image_utils.crop_face(current_frame, bbox)
-                    embedding = self.model.forward(image_utils.normalization_frame_tensor(face_frame))
-                    if embedding is not None:
-                        self.name_dist = self.database.verify(embedding).split()
-                else:
-                    logger.error("Error when retrieving a vector image of a face.")
-            except queue.Empty:
-                continue
-
+    
+    
     def update_frame(self):
-        ret, frame = self.camera.read_frame()
+        ret, frame = self.camera.read()
         ret, frame = image_utils.read_rgb_frame(ret, frame)
 
         if ret:
@@ -153,41 +94,67 @@ class FaceRecognitionApp(QMainWindow):
                 y = max(0, y)
                 x = min(x, frame.shape[1])
                 y = min(y, frame.shape[0])
-                self.frame_queue.put((self.current_frame, bbox))
-                cv2.putText(frame, self.name_dist[0] + " " + self.name_dist[1], (x, y+h+20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+                face_frame = frame[y:y+h, x:x+w]
+                embedding = self.get_embedding(face_frame)
+                name_dist = self.database.verify(self.cursor, embedding).split()[0]
+
+                cv2.putText(frame, name_dist[0] + " " + name_dist[1], (x, y+h+20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
                 #cv2.putText(frame, name_dist[0], (x, y+h+20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
                 cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
-            else:
-                logger.warn("No faces on frame")
+            
             image = QImage(frame, frame.shape[1], frame.shape[0], QImage.Format_RGB888)
             pixmap = QPixmap.fromImage(image)
             self.camera_label.setPixmap(pixmap)
 
-    def initiate_delete_process(self):
-        bbox = self.face_detector.detect_face(self.current_frame)[0]
-        if (len(bbox) > 0):
-                face_frame = image_utils.crop_face(self.current_frame, bbox)
-                embedding = self.model.forward(image_utils.normalization_frame_tensor(face_frame))
-                if embedding is not None:
-                    self.name_dist = self.database.verify(embedding).split()
-                else:
-                    logger.error("Error when retrieving a vector image of a face.")
-                if self.name_dist[0] != "unknown":
-                    self.confirm_delete(self.name_dist[0])
+    def add_to_database(self):
+        
+        def save_face(face_frame, name):
+            folder_path = 'face_data'
+            if not os.path.exists(folder_path):
+                os.makedirs(folder_path)
+
+            face_img_path = os.path.join(folder_path, f'{name}.png')
+            cv2.imwrite(face_img_path, face_frame)
+
+        if self.current_frame is not None:
+            frame = self.current_frame
+            bbox = self.face_detector.detect_face(self.current_frame)[0]
+            if (len(bbox) > 0):
+                x, y, w, h = bbox
+                x = max(0, x)
+                y = max(0, y)
+                x = min(x, frame.shape[1])
+                y = min(y, frame.shape[0])
+                face_frame = frame[y:y+h, x:x+w]
+                print(bbox)
+                embedding = self.get_embedding(face_frame)
+                self.database.save_embedding_to_database(self.conn, self.cursor, embedding, self.img_name_input)
+                save_face(face_frame, self.img_name_input)
         else:
-                logger.warn("No faces on frame")
+            print("Нет доступного кадра для добавления в базу данных.")
+    
+    def initiate_delete_process(self):
+        frame = self.current_frame
+        bbox = self.face_detector.detect_face(frame)[0]
+        print(bbox)
+        if (len(bbox) > 0):
+            x, y, w, h = bbox
+            x = max(0, x)
+            y = max(0, y)
+            x = min(x, frame.shape[1])
+            y = min(y, frame.shape[0])
+            face_frame = frame[y:y+h, x:x+w]
+            embedding = self.get_embedding(face_frame)
+            name_distance = self.database.verify(self.cursor, embedding).split()
+            if name_distance[0] != "unknown":
+                self.confirm_delete(name_distance[0])
 
     def confirm_delete(self, name):
         reply = QMessageBox.question(self, 'Подтверждение удаления', 
                                      f"Вы уверены, что хотите удалить {name}?",
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
-            self.database.delete_record(name) 
-    
-    def closeEvent(self, event):  
-        self.running = False  
-        self.process_thread.join()  
-        event.accept()  
+            self.database.delete_record(self.conn, self.cursor, name)
     
 if __name__ == '__main__':
     app = QApplication(sys.argv)

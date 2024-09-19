@@ -26,6 +26,7 @@ from commons.logger import Logger
 
 logger = Logger()
 
+
 class FaceRecognitionApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -47,6 +48,8 @@ class FaceRecognitionApp(QMainWindow):
         self.model = GhostFace.GhostFaceNetClient()
         self.database = FaceDatabase()  # Инициализация базы данных
 
+        self.lock = threading.Lock()
+
         # GUI
         self.setWindowTitle("Face Recognition App")
         self.setGeometry(100, 100, 800, 600)
@@ -67,7 +70,7 @@ class FaceRecognitionApp(QMainWindow):
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
-        self.timer.start(50)
+        self.timer.start(30)
 
     def show_input_dialog(self):
         self.img_name_input, okPressed = QInputDialog.getText(self, "Введите имя", "Имя изображения:")
@@ -83,10 +86,12 @@ class FaceRecognitionApp(QMainWindow):
             bbox = self.face_detector.detect_face(self.current_frame)[0]
             if len(bbox) > 0:
                 face_frame = image_utils.crop_face(self.current_frame, bbox)
+                face_frame = cv2.cvtColor(face_frame, cv2.COLOR_BGR2RGB)
                 embedding = self.model.forward(image_utils.normalization_frame_tensor(face_frame))
 
-                if embedding is not None:
-                    self.db_queue.put(("add", embedding, face_frame, self.img_name_input))
+                if embedding is not None: 
+                    with self.lock:
+                        self.db_queue.put(("add", embedding, face_frame, self.img_name_input))
 
         except Exception as e:
             print(f"Ошибка при добавлении в базу: {e}")
@@ -97,6 +102,7 @@ class FaceRecognitionApp(QMainWindow):
                 current_frame, bbox = self.frame_queue.get()
                 if bbox is not None:
                     face_frame = image_utils.crop_face(current_frame, bbox)
+                    face_frame = cv2.cvtColor(face_frame, cv2.COLOR_BGR2RGB)
                     embedding = self.model.forward(image_utils.normalization_frame_tensor(face_frame))
                     if embedding is not None:
                         self.db_queue.put(("verify", embedding,))
@@ -108,23 +114,38 @@ class FaceRecognitionApp(QMainWindow):
     def process_database_queue(self):
         while self.running:
             try:
-                operation, *data = self.db_queue.get()
-                if operation == "add":
-                    embedding = data
+                data = self.db_queue.get()
+                # for i in data:
+                #     print(i)
+                if data[0] == "add":
+                    embedding = data[1]
+                    face_frame = data[2]
                     with sqlite3.connect('facialdb.db') as conn:
                         cursor = conn.cursor()
                         self.database.save_embedding_to_database(conn, cursor, embedding, self.img_name_input)
                         conn.commit()
-                elif operation == "delete":
-                    name = data[0] if isinstance(data, list) else name
+                    with self.lock:
+                        with sqlite3.connect('facialdb.db') as conn: 
+                            cursor = conn.cursor()
+                            self.database.save_embedding_to_database(conn, cursor, embedding, self.img_name_input)
+                            conn.commit()
+                    folder_path = 'face_data'
+                    if not os.path.exists(folder_path):
+                        os.makedirs(folder_path)
+
+                    face_img_path = os.path.join(folder_path, f'{self.img_name_input}.png')
+                    cv2.imwrite(face_img_path, face_frame)
+
+                elif data[0] == "delete":
+                    name = data[1]
                     with sqlite3.connect('facialdb.db') as conn:
                         cursor = conn.cursor()
                         self.database.delete_record(conn, cursor, name) 
-                elif operation == "verify":
-                    embedding = data
+                elif data[0] == "verify":
+                    embedding = data[1]
                     with sqlite3.connect('facialdb.db') as conn:
                         cursor = conn.cursor()
-                        print(f"Embedding Shape:")
+                        # print(f"Embedding Shape:")
                         self.name_dist = self.database.verify(cursor, embedding).split()[0]
                         print(self.name_dist)
 
@@ -148,7 +169,7 @@ class FaceRecognitionApp(QMainWindow):
                 # Добавляем кадр в очередь для обработки
                 self.frame_queue.put((self.current_frame, bbox))
 
-                cv2.putText(frame, f"{self.name_dist[0]} {self.name_dist[1]}", (x, y + h + 20), cv2.FONT_HERSHEY_SIMPLEX,
+                cv2.putText(frame, f"{self.name_dist}", (x, y + h + 20), cv2.FONT_HERSHEY_SIMPLEX,
                             0.5, (255, 0, 0), 2)
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
             else:
