@@ -122,11 +122,10 @@ class FaceRecognitionApp(QMainWindow):
                         self.database.delete_record(conn, cursor, name) 
                 elif operation == "verify":
                     embedding = data
-                    print(len(embedding))
                     with sqlite3.connect('facialdb.db') as conn:
                         cursor = conn.cursor()
                         print(f"Embedding Shape:")
-                        self.name_dist = self.database.verify(cursor, embedding)
+                        self.name_dist = self.database.verify(cursor, embedding).split()[0]
                         print(self.name_dist)
 
             except queue.Empty:
