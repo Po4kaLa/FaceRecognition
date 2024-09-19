@@ -36,19 +36,19 @@ class FaceRecognitionApp(QMainWindow):
         self.current_frame = None
 
         self.frame_queue = queue.Queue()
-        self.db_queue = queue.Queue()  # Очередь для операций с базой данных
+        self.db_queue = queue.Queue() 
         self.process_thread = threading.Thread(target=self.process_frames)
-        self.db_thread = threading.Thread(target=self.process_database_queue)  # Поток для работы с БД
+        self.db_thread = threading.Thread(target=self.process_database_queue)  
         self.running = True
         self.process_thread.start()
-        self.db_thread.start()  # Запуск потока для обработки очереди БД
+        self.db_thread.start() 
 
         self.camera = Camera()
         self.face_detector = Yolov8.YoloDetector()
         self.model = GhostFace.GhostFaceNetClient()
-        self.database = FaceDatabase()  # Инициализация базы данных
+        self.database = FaceDatabase() 
 
-        self.lock = threading.Lock()
+        # self.lock = threading.Lock()
 
         # GUI
         self.setWindowTitle("Face Recognition App")
@@ -76,7 +76,7 @@ class FaceRecognitionApp(QMainWindow):
         self.img_name_input, okPressed = QInputDialog.getText(self, "Введите имя", "Имя изображения:")
         if self.current_frame is not None:
             if okPressed and self.img_name_input != '':
-                # Добавляем данные в очередь для базы данных
+
                 self.append_database()
         else:
             print("Нет доступного кадра для добавления в базу.")
@@ -90,8 +90,9 @@ class FaceRecognitionApp(QMainWindow):
                 embedding = self.model.forward(image_utils.normalization_frame_tensor(face_frame))
 
                 if embedding is not None: 
-                    with self.lock:
-                        self.db_queue.put(("add", embedding, face_frame, self.img_name_input))
+                    # with self.lock:
+                    #     self.db_queue.put(("add", embedding, face_frame, self.img_name_input))
+                    self.db_queue.put(("add", embedding, face_frame, self.img_name_input))
 
         except Exception as e:
             print(f"Ошибка при добавлении в базу: {e}")
@@ -120,15 +121,9 @@ class FaceRecognitionApp(QMainWindow):
                 if data[0] == "add":
                     embedding = data[1]
                     face_frame = data[2]
-                    with sqlite3.connect('facialdb.db') as conn:
+                    with sqlite3.connect('facialdb.db') as conn: 
                         cursor = conn.cursor()
                         self.database.save_embedding_to_database(conn, cursor, embedding, self.img_name_input)
-                        conn.commit()
-                    with self.lock:
-                        with sqlite3.connect('facialdb.db') as conn: 
-                            cursor = conn.cursor()
-                            self.database.save_embedding_to_database(conn, cursor, embedding, self.img_name_input)
-                            conn.commit()
                     folder_path = 'face_data'
                     if not os.path.exists(folder_path):
                         os.makedirs(folder_path)
@@ -166,7 +161,6 @@ class FaceRecognitionApp(QMainWindow):
                 x = min(x, frame.shape[1])
                 y = min(y, frame.shape[0])
 
-                # Добавляем кадр в очередь для обработки
                 self.frame_queue.put((self.current_frame, bbox))
 
                 cv2.putText(frame, f"{self.name_dist}", (x, y + h + 20), cv2.FONT_HERSHEY_SIMPLEX,
@@ -186,7 +180,6 @@ class FaceRecognitionApp(QMainWindow):
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if reply == QMessageBox.Yes:
                 try:
-                    # Добавляем операцию удаления в очередь
                     self.db_queue.put(("delete", name_to_delete))
                 except Exception as e:
                     print(f"Error adding delete operation: {e}")
