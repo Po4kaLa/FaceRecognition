@@ -4,7 +4,7 @@ Paper:
 https://arxiv.org/pdf/1911.11907.pdf
 """
 
-from facerec.models import Recognitor
+from models.Recognitor import Recognitor
 
 import tensorflow as tf
 from tensorflow import keras
@@ -48,7 +48,7 @@ def load_model():
     embedding = keras.layers.BatchNormalization(momentum=0.99, epsilon=0.001, scale=True, name="pre_embedding")(nn)
     embedding_fp32 = keras.layers.Activation("linear", dtype="float32", name="embedding")(embedding)
     obrez = keras.models.Model(inputs, embedding_fp32, name="OBREZ")
-    obrez = obrez.load_weights("./facerec/weights/GhostFaceNet_o2.h5")
+    obrez.load_weights("../weights/GhostFaceNet_o2.h5")
     return obrez
 
 def replace_ReLU_with_PReLU(model, target_activation="PReLU", **kwargs):
@@ -59,17 +59,17 @@ def replace_ReLU_with_PReLU(model, target_activation="PReLU", **kwargs):
         if isinstance(layer, ReLU) or (isinstance(layer, Activation) and layer.activation == keras.activations.relu):
             if target_activation == "PReLU":
                 layer_name = layer.name.replace("_relu", "_prelu")
-                print(">>>> Convert ReLU:", layer.name, "-->", layer_name)
+                # print(">>>> Convert ReLU:", layer.name, "-->", layer_name)
                 # Default initial value in mxnet and pytorch is 0.25
                 return PReLU(shared_axes=[1, 2], alpha_initializer=tf.initializers.Constant(0.25), name=layer_name, **kwargs)
             elif isinstance(target_activation, str):
                 layer_name = layer.name.replace("_relu", "_" + target_activation)
-                print(">>>> Convert ReLU:", layer.name, "-->", layer_name)
+                # print(">>>> Convert ReLU:", layer.name, "-->", layer_name)
                 return Activation(activation=target_activation, name=layer_name, **kwargs)
             else:
                 act_class_name = target_activation.__name__
                 layer_name = layer.name.replace("_relu", "_" + act_class_name)
-                print(">>>> Convert ReLU:", layer.name, "-->", layer_name)
+                # print(">>>> Convert ReLU:", layer.name, "-->", layer_name)
                 return target_activation(**kwargs)
         return layer
 

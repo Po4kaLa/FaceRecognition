@@ -2,12 +2,12 @@ from typing import Any, List, Tuple
 
 import numpy as np
 
-from facerec.logging.log import Logger
-from facerec.models import Detector
+from commons.logger import Logger
+from models.Detector import Detector
 
 logger = Logger()
 
-PATH_WEIGHTS = "./facerec/weights/yolov8n-face.pt"
+PATH_WEIGHTS = "../weights/yolov8n-face.pt"
 
 class YoloDetector(Detector):
     def __init__(self):

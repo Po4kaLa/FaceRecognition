@@ -1,7 +1,7 @@
 import cv2
 import tensorflow as tf
 
-from facerec.logging.log import Logger
+from commons.logger import Logger
 
 logger = Logger()
 
@@ -10,7 +10,7 @@ def read_rgb_frame(ret, frame):
         logger.error("Failed to take frame from video stream.")
         return None 
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    return frame
+    return ret, frame
 
 def normalization_frame_tensor(frame):
     try:
